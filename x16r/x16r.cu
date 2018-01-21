@@ -47,7 +47,7 @@ extern "C"
 
 #define X16R_HASH_COUNT (X16R_SHA512 + 1)
 
-static char *hash_names[X16R_HASH_COUNT] =
+static const char *hash_names[X16R_HASH_COUNT] =
 {
     "blake",
     "bmw",
@@ -226,12 +226,12 @@ extern "C" int scanhash_x16r(int thr_id, struct work* work, uint32_t max_nonce, 
 
     // FIXME: CPU fallback for unimplemented first round algorithms
     uint32_t _ALIGN(64) h_hash[16];
+    sph_shavite512_context   ctx_shavite;    //8
     sph_simd512_context      ctx_simd;       //9
     sph_echo512_context      ctx_echo;       //A
     sph_hamsi512_context     ctx_hamsi;      //B
     sph_fugue512_context     ctx_fugue;      //C
     sph_shabal512_context    ctx_shabal;     //D
-    sph_whirlpool_context    ctx_whirlpool;  //E
     sph_sha512_context       ctx_sha512;     //F
 
 	if (opt_benchmark)
@@ -267,6 +267,7 @@ extern "C" int scanhash_x16r(int thr_id, struct work* work, uint32_t max_nonce, 
 		x13_hamsi512_cpu_init(thr_id, throughput);
 		x13_fugue512_cpu_init(thr_id, throughput);
 		x14_shabal512_cpu_init(thr_id, throughput);
+        whirlpool512_init_sm3(thr_id, throughput, 0);
 		x15_whirlpool_cpu_init(thr_id, throughput, 0);
 		x17_sha512_cpu_init(thr_id, throughput);
 
@@ -340,7 +341,11 @@ extern "C" int scanhash_x16r(int thr_id, struct work* work, uint32_t max_nonce, 
             cubehash512_setBlock_80(thr_id, endiandata);
             break;
         case X16R_SHAVITE:
-            x11_shavite512_setBlock_80(endiandata);
+            // FIXME: x11_shavite512_setBlock_80(endiandata);
+            if (opt_debug)
+            {
+                gpulog(LOG_DEBUG, thr_id, "Not yet implemented: shavite512/80 (falling back on CPU for first round)");
+            }
             break;
         case X16R_SIMD:
             if (opt_debug)
@@ -373,10 +378,7 @@ extern "C" int scanhash_x16r(int thr_id, struct work* work, uint32_t max_nonce, 
             }
             break;
         case X16R_WHIRLPOOL:
-            if (opt_debug)
-            {
-                gpulog(LOG_DEBUG, thr_id, "Not yet implemented: whirlpool512/80 (falling back on CPU for first round)");
-            }
+            whirlpool512_setBlock_80_sm3((void*)endiandata, ptarget);
             break;
         case X16R_SHA512:
             if (opt_debug)
@@ -394,6 +396,8 @@ extern "C" int scanhash_x16r(int thr_id, struct work* work, uint32_t max_nonce, 
 	do
 	{
         int order = 0;
+        uint32_t nonce_begin = pdata[19];
+        uint32_t nonce_end = nonce_begin + throughput;
 
 		switch (hash_selection[0])
 		{
@@ -422,56 +426,87 @@ extern "C" int scanhash_x16r(int thr_id, struct work* work, uint32_t max_nonce, 
                 cubehash512_cuda_hash_80(thr_id, throughput, pdata[19], d_hash[thr_id]); order++;
                 break;
             case X16R_SHAVITE:
-                x11_shavite512_cpu_hash_80(thr_id, throughput, pdata[19], d_hash[thr_id], order++);
+                // FIXME: wrong hash?
+                //x11_shavite512_cpu_hash_80(thr_id, throughput, pdata[19], d_hash[thr_id], order++);
+                for (uint32_t nonce = nonce_begin; nonce < nonce_end; nonce++)
+                {
+                    be32enc(&endiandata[19], nonce);
+                    sph_shavite512_init(&ctx_shavite);
+                    sph_shavite512(&ctx_shavite, endiandata, 80);
+                    sph_shavite512_close(&ctx_shavite, h_hash);
+                    cudaMemcpy(d_hash[thr_id] + (16 * nonce), h_hash, 16 * sizeof(uint32_t), cudaMemcpyHostToDevice);
+                }
                 break;
             case X16R_SIMD:
-                sph_simd512_init(&ctx_simd);
-                sph_simd512(&ctx_simd, endiandata, 80);
-                sph_simd512_close(&ctx_simd, h_hash);
-                cudaMemcpy(d_hash[thr_id], h_hash, 16 * sizeof(uint32_t), cudaMemcpyHostToDevice);
+                for (uint32_t nonce = nonce_begin; nonce < nonce_end; nonce++)
+                {
+                    be32enc(&endiandata[19], nonce);
+                    sph_simd512_init(&ctx_simd);
+                    sph_simd512(&ctx_simd, endiandata, 80);
+                    sph_simd512_close(&ctx_simd, h_hash);
+                    cudaMemcpy(d_hash[thr_id] + (16 * nonce), h_hash, 16 * sizeof(uint32_t), cudaMemcpyHostToDevice);
+                }
                 break;
             case X16R_ECHO:
-                sph_echo512_init(&ctx_echo);
-                sph_echo512(&ctx_echo, endiandata, 80);
-                sph_echo512_close(&ctx_echo, h_hash);
-                cudaMemcpy(d_hash[thr_id], h_hash, 16 * sizeof(uint32_t), cudaMemcpyHostToDevice);
+                for (uint32_t nonce = nonce_begin; nonce < nonce_end; nonce++)
+                {
+                    be32enc(&endiandata[19], nonce);
+                    sph_echo512_init(&ctx_echo);
+                    sph_echo512(&ctx_echo, endiandata, 80);
+                    sph_echo512_close(&ctx_echo, h_hash);
+                    cudaMemcpy(d_hash[thr_id] + (16 * nonce), h_hash, 16 * sizeof(uint32_t), cudaMemcpyHostToDevice);
+                }
                 break;
             case X16R_HAMSI:
-                sph_hamsi512_init(&ctx_hamsi);
-                sph_hamsi512(&ctx_hamsi, endiandata, 80);
-                sph_hamsi512_close(&ctx_hamsi, h_hash);
-                cudaMemcpy(d_hash[thr_id], h_hash, 16 * sizeof(uint32_t), cudaMemcpyHostToDevice);
+                for (uint32_t nonce = nonce_begin; nonce < nonce_end; nonce++)
+                {
+                    be32enc(&endiandata[19], nonce);
+                    sph_hamsi512_init(&ctx_hamsi);
+                    sph_hamsi512(&ctx_hamsi, endiandata, 80);
+                    sph_hamsi512_close(&ctx_hamsi, h_hash);
+                    cudaMemcpy(d_hash[thr_id] + (16 * nonce), h_hash, 16 * sizeof(uint32_t), cudaMemcpyHostToDevice);
+                }
                 break;
             case X16R_FUGUE:
-                sph_fugue512_init(&ctx_fugue);
-                sph_fugue512(&ctx_fugue, endiandata, 80);
-                sph_fugue512_close(&ctx_fugue, h_hash);
-                cudaMemcpy(d_hash[thr_id], h_hash, 16 * sizeof(uint32_t), cudaMemcpyHostToDevice);
+                for (uint32_t nonce = nonce_begin; nonce < nonce_end; nonce++)
+                {
+                    be32enc(&endiandata[19], nonce);
+                    sph_fugue512_init(&ctx_fugue);
+                    sph_fugue512(&ctx_fugue, endiandata, 80);
+                    sph_fugue512_close(&ctx_fugue, h_hash);
+                    cudaMemcpy(d_hash[thr_id] + (16 * nonce), h_hash, 16 * sizeof(uint32_t), cudaMemcpyHostToDevice);
+                }
                 break;
             case X16R_SHABAL:
-                sph_shabal512_init(&ctx_shabal);
-                sph_shabal512(&ctx_shabal, endiandata, 80);
-                sph_shabal512_close(&ctx_shabal, h_hash);
-                cudaMemcpy(d_hash[thr_id], h_hash, 16 * sizeof(uint32_t), cudaMemcpyHostToDevice);
+                for (uint32_t nonce = nonce_begin; nonce < nonce_end; nonce++)
+                {
+                    be32enc(&endiandata[19], nonce);
+                    sph_shabal512_init(&ctx_shabal);
+                    sph_shabal512(&ctx_shabal, endiandata, 80);
+                    sph_shabal512_close(&ctx_shabal, h_hash);
+                    cudaMemcpy(d_hash[thr_id] + (16 * nonce), h_hash, 16 * sizeof(uint32_t), cudaMemcpyHostToDevice);
+                }
                 break;
             case X16R_WHIRLPOOL:
-                // FIXME: wrong hash?
-		        //whirlpool512_hash_80_sm3(thr_id, throughput, pdata[19], d_hash[thr_id]); order++;
-                sph_whirlpool_init(&ctx_whirlpool);
-                sph_whirlpool(&ctx_whirlpool, endiandata, 80);
-                sph_whirlpool_close(&ctx_whirlpool, h_hash);
-                cudaMemcpy(d_hash[thr_id], h_hash, 16 * sizeof(uint32_t), cudaMemcpyHostToDevice);
+		        whirlpool512_hash_80_sm3(thr_id, throughput, pdata[19], d_hash[thr_id]); order++;
                 break;
             case X16R_SHA512:
-                sph_sha512_init(&ctx_sha512);
-                sph_sha512(&ctx_sha512, endiandata, 80);
-                sph_sha512_close(&ctx_sha512, h_hash);
-                cudaMemcpy(d_hash[thr_id], h_hash, 16 * sizeof(uint32_t), cudaMemcpyHostToDevice);
+                for (uint32_t nonce = nonce_begin; nonce < nonce_end; nonce++)
+                {
+                    be32enc(&endiandata[19], nonce);
+                    sph_sha512_init(&ctx_sha512);
+                    sph_sha512(&ctx_sha512, endiandata, 80);
+                    sph_sha512_close(&ctx_sha512, h_hash);
+                    cudaMemcpy(d_hash[thr_id] + (16 * nonce), h_hash, 16 * sizeof(uint32_t), cudaMemcpyHostToDevice);
+                }
 		        break;
             default:
                 gpulog(LOG_ERR, thr_id, "Round %d unknown hash selection: %d (this should never happen!)", 0, hash_selection[0]);
                 break;
 		}
+
+        pdata[19] = nonce_begin;
+        be32enc(&endiandata[19], pdata[19]);
 
         for (int i = 1; i < X16R_HASH_COUNT; i++)
 		{
@@ -601,6 +636,7 @@ extern "C" void free_x16r(int thr_id)
     quark_groestl512_cpu_free(thr_id);
     x11_simd512_cpu_free(thr_id);
     x13_fugue512_cpu_free(thr_id);
+    whirlpool512_free_sm3(thr_id);
     x15_whirlpool_cpu_free(thr_id);
 
 	cuda_check_cpu_free(thr_id);
