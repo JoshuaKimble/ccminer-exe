@@ -226,7 +226,6 @@ extern "C" int scanhash_x16r(int thr_id, struct work* work, uint32_t max_nonce, 
 
     // FIXME: CPU fallback for unimplemented first round algorithms
     uint32_t _ALIGN(64) h_hash[16];
-    sph_shavite512_context   ctx_shavite;    //8
     sph_simd512_context      ctx_simd;       //9
     sph_echo512_context      ctx_echo;       //A
     sph_hamsi512_context     ctx_hamsi;      //B
@@ -341,11 +340,7 @@ extern "C" int scanhash_x16r(int thr_id, struct work* work, uint32_t max_nonce, 
             cubehash512_setBlock_80(thr_id, endiandata);
             break;
         case X16R_SHAVITE:
-            // FIXME: x11_shavite512_setBlock_80(endiandata);
-            if (opt_debug)
-            {
-                gpulog(LOG_DEBUG, thr_id, "Not yet implemented: shavite512/80 (falling back on CPU for first round)");
-            }
+            x11_shavite512_setBlock_80(endiandata);
             break;
         case X16R_SIMD:
             if (opt_debug)
@@ -426,16 +421,7 @@ extern "C" int scanhash_x16r(int thr_id, struct work* work, uint32_t max_nonce, 
                 cubehash512_cuda_hash_80(thr_id, throughput, pdata[19], d_hash[thr_id]); order++;
                 break;
             case X16R_SHAVITE:
-                // FIXME: wrong hash?
-                //x11_shavite512_cpu_hash_80(thr_id, throughput, pdata[19], d_hash[thr_id], order++);
-                for (uint32_t nonce = nonce_begin; nonce < nonce_end; nonce++)
-                {
-                    be32enc(&endiandata[19], nonce);
-                    sph_shavite512_init(&ctx_shavite);
-                    sph_shavite512(&ctx_shavite, endiandata, 80);
-                    sph_shavite512_close(&ctx_shavite, h_hash);
-                    cudaMemcpy(d_hash[thr_id] + (16 * nonce), h_hash, 16 * sizeof(uint32_t), cudaMemcpyHostToDevice);
-                }
+                x11_shavite512_cpu_hash_80(thr_id, throughput, pdata[19], d_hash[thr_id], order++);
                 break;
             case X16R_SIMD:
                 for (uint32_t nonce = nonce_begin; nonce < nonce_end; nonce++)
