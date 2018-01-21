@@ -293,6 +293,7 @@ extern "C" int scanhash_x16r(int thr_id, struct work* work, uint32_t max_nonce, 
     if (opt_debug)
     {
         applog_hex((void *) endiandata, 80);
+        applog_hex((void *) ptarget, 32);
         gpulog(LOG_DEBUG, thr_id, "hash selection: %s-%s-%s-%s-%s-%s-%s-%s-%s-%s-%s-%s-%s-%s-%s-%s",
             hash_names[hash_selection[0]],
             hash_names[hash_selection[1]],
@@ -391,8 +392,6 @@ extern "C" int scanhash_x16r(int thr_id, struct work* work, uint32_t max_nonce, 
 	do
 	{
         int order = 0;
-        uint32_t nonce_begin = pdata[19];
-        uint32_t nonce_end = nonce_begin + throughput;
 
 		switch (hash_selection[0])
 		{
@@ -424,66 +423,66 @@ extern "C" int scanhash_x16r(int thr_id, struct work* work, uint32_t max_nonce, 
                 x11_shavite512_cpu_hash_80(thr_id, throughput, pdata[19], d_hash[thr_id], order++);
                 break;
             case X16R_SIMD:
-                for (uint32_t nonce = nonce_begin; nonce < nonce_end; nonce++)
+                for (int i = 0; i < throughput; i++)
                 {
-                    be32enc(&endiandata[19], nonce);
+                    be32enc(&endiandata[19], pdata[19] + i);
                     sph_simd512_init(&ctx_simd);
                     sph_simd512(&ctx_simd, endiandata, 80);
                     sph_simd512_close(&ctx_simd, h_hash);
-                    cudaMemcpy(d_hash[thr_id] + (16 * nonce), h_hash, 16 * sizeof(uint32_t), cudaMemcpyHostToDevice);
+                    cudaMemcpy(d_hash[thr_id] + (16 * i), h_hash, 16 * sizeof(uint32_t), cudaMemcpyHostToDevice);
                 }
                 break;
             case X16R_ECHO:
-                for (uint32_t nonce = nonce_begin; nonce < nonce_end; nonce++)
+                for (int i = 0; i < throughput; i++)
                 {
-                    be32enc(&endiandata[19], nonce);
+                    be32enc(&endiandata[19], pdata[19] + i);
                     sph_echo512_init(&ctx_echo);
                     sph_echo512(&ctx_echo, endiandata, 80);
                     sph_echo512_close(&ctx_echo, h_hash);
-                    cudaMemcpy(d_hash[thr_id] + (16 * nonce), h_hash, 16 * sizeof(uint32_t), cudaMemcpyHostToDevice);
+                    cudaMemcpy(d_hash[thr_id] + (16 * i), h_hash, 16 * sizeof(uint32_t), cudaMemcpyHostToDevice);
                 }
                 break;
             case X16R_HAMSI:
-                for (uint32_t nonce = nonce_begin; nonce < nonce_end; nonce++)
+                for (int i = 0; i < throughput; i++)
                 {
-                    be32enc(&endiandata[19], nonce);
+                    be32enc(&endiandata[19], pdata[19] + i);
                     sph_hamsi512_init(&ctx_hamsi);
                     sph_hamsi512(&ctx_hamsi, endiandata, 80);
                     sph_hamsi512_close(&ctx_hamsi, h_hash);
-                    cudaMemcpy(d_hash[thr_id] + (16 * nonce), h_hash, 16 * sizeof(uint32_t), cudaMemcpyHostToDevice);
+                    cudaMemcpy(d_hash[thr_id] + (16 * i), h_hash, 16 * sizeof(uint32_t), cudaMemcpyHostToDevice);
                 }
                 break;
             case X16R_FUGUE:
-                for (uint32_t nonce = nonce_begin; nonce < nonce_end; nonce++)
+                for (int i = 0; i < throughput; i++)
                 {
-                    be32enc(&endiandata[19], nonce);
+                    be32enc(&endiandata[19], pdata[19] + i);
                     sph_fugue512_init(&ctx_fugue);
                     sph_fugue512(&ctx_fugue, endiandata, 80);
                     sph_fugue512_close(&ctx_fugue, h_hash);
-                    cudaMemcpy(d_hash[thr_id] + (16 * nonce), h_hash, 16 * sizeof(uint32_t), cudaMemcpyHostToDevice);
+                    cudaMemcpy(d_hash[thr_id] + (16 * i), h_hash, 16 * sizeof(uint32_t), cudaMemcpyHostToDevice);
                 }
                 break;
             case X16R_SHABAL:
-                for (uint32_t nonce = nonce_begin; nonce < nonce_end; nonce++)
+                for (int i = 0; i < throughput; i++)
                 {
-                    be32enc(&endiandata[19], nonce);
+                    be32enc(&endiandata[19], pdata[19] + i);
                     sph_shabal512_init(&ctx_shabal);
                     sph_shabal512(&ctx_shabal, endiandata, 80);
                     sph_shabal512_close(&ctx_shabal, h_hash);
-                    cudaMemcpy(d_hash[thr_id] + (16 * nonce), h_hash, 16 * sizeof(uint32_t), cudaMemcpyHostToDevice);
+                    cudaMemcpy(d_hash[thr_id] + (16 * i), h_hash, 16 * sizeof(uint32_t), cudaMemcpyHostToDevice);
                 }
                 break;
             case X16R_WHIRLPOOL:
 		        whirlpool512_hash_80_sm3(thr_id, throughput, pdata[19], d_hash[thr_id]); order++;
                 break;
             case X16R_SHA512:
-                for (uint32_t nonce = nonce_begin; nonce < nonce_end; nonce++)
+                for (int i = 0; i < throughput; i++)
                 {
-                    be32enc(&endiandata[19], nonce);
+                    be32enc(&endiandata[19], pdata[19] + i);
                     sph_sha512_init(&ctx_sha512);
                     sph_sha512(&ctx_sha512, endiandata, 80);
                     sph_sha512_close(&ctx_sha512, h_hash);
-                    cudaMemcpy(d_hash[thr_id] + (16 * nonce), h_hash, 16 * sizeof(uint32_t), cudaMemcpyHostToDevice);
+                    cudaMemcpy(d_hash[thr_id] + (16 * i), h_hash, 16 * sizeof(uint32_t), cudaMemcpyHostToDevice);
                 }
 		        break;
             default:
@@ -491,7 +490,6 @@ extern "C" int scanhash_x16r(int thr_id, struct work* work, uint32_t max_nonce, 
                 break;
 		}
 
-        pdata[19] = nonce_begin;
         be32enc(&endiandata[19], pdata[19]);
 
         for (int i = 1; i < X16R_HASH_COUNT; i++)
