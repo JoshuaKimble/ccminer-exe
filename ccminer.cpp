@@ -1,4 +1,4 @@
-﻿/*
+/*
  * Copyright 2010 Jeff Garzik
  * Copyright 2012-2014 pooler
  * Copyright 2014-2017 tpruvot
@@ -117,6 +117,7 @@ static json_t *opt_config;
 static const bool opt_time = true;
 volatile enum sha_algos opt_algo = ALGO_AUTO;
 int opt_n_threads = 0;
+int opt_n_cpu_fallback_threads = 1;
 int gpu_threads = 1;
 int64_t opt_affinity = -1L;
 int opt_priority = 0;
@@ -312,6 +313,7 @@ Options:\n\
       --cert=FILE       certificate for mining server using SSL\n\
   -x, --proxy=[PROTOCOL://]HOST[:PORT]  connect through a proxy\n\
   -t, --threads=N       number of miner threads (default: number of nVidia GPUs)\n\
+  -F, --num-fallback-threads    number of subthreads to use  (per mining thread) when falling back to the CPU (for X16R Algo).\n\
   -r, --retries=N       number of times to retry if a network call fails\n\
                           (default: retry indefinitely)\n\
   -R, --retry-pause=N   time to pause between retries, in seconds (default: 30)\n\
@@ -463,6 +465,7 @@ struct option options[] = {
 	{ "diff-multiplier", 1, NULL, 'm' },
 	{ "diff-factor", 1, NULL, 'f' },
 	{ "diff", 1, NULL, 'f' }, // compat
+	{ "num-fallback-threads", 1, NULL, 'F' },
 	{ 0, 0, 0, 0 }
 };
 
@@ -3269,6 +3272,14 @@ void parse_arg(int key, char *arg)
 			show_usage_and_exit(1);
 		opt_n_threads = v;
 		break;
+	case 'F': // --num-fallback-threads
+		opt_n_cpu_fallback_threads = atof(arg);
+		
+		if(opt_n_cpu_fallback_threads < 1)
+		{
+			opt_n_cpu_fallback_threads = 1;
+		}
+		break;
 	case 1022: // --vote
 		v = atoi(arg);
 		if (v < 0 || v > 8192)	/* sanity check */
@@ -3667,7 +3678,6 @@ void parse_arg(int key, char *arg)
 			show_usage_and_exit(1);
 		opt_difficulty = 1.0/d;
 		break;
-
 	/* PER POOL CONFIG OPTIONS */
 
 	case 1100: /* pool name */
