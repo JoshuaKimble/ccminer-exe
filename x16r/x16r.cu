@@ -71,8 +71,8 @@ typedef struct
 {
     int                     id;
     pthread_t               thread;
-    pthread_cond_t          cond;
-    pthread_mutex_t         mutex;
+    pthread_cond_t          cond = PTHREAD_COND_INITIALIZER;
+    pthread_mutex_t         mutex = PTHREAD_MUTEX_INITIALIZER;
     int                     thr_id;
     uint32_t                joboffset;
     uint32_t                jobcount;
@@ -243,14 +243,19 @@ static void *scanhash_cpufallback_thread(void *userdata)
 {
     subthread_t& subthread = *((subthread_t*)userdata);
 
-    while (1)
+	pthread_mutex_lock(&subthread.mutex);
+
+	while (1)
     {
-        pthread_mutex_lock(&subthread.mutex);
-        
-        while (!subthread.jobcount)
-        {
-            pthread_cond_wait(&subthread.cond, &subthread.mutex);
-        }
+		while (!subthread.jobcount)
+		{
+			pthread_cond_wait(&subthread.cond, &subthread.mutex);
+
+			if (subthread.exit_thread)
+			{
+				break;
+			}
+		}
 
 		if (subthread.exit_thread)
 		{
@@ -258,11 +263,6 @@ static void *scanhash_cpufallback_thread(void *userdata)
 
 			break;
 		}
-
-        if (opt_debug)
-        {
-            gpulog(LOG_DEBUG, subthread.thr_id, "subthread %d : running jobs %u->%u.", subthread.id, subthread.joboffset, subthread.joboffset + subthread.jobcount);
-        }
 
         for (uint32_t i = subthread.joboffset; i < subthread.joboffset + subthread.jobcount; i++)
         {
@@ -308,16 +308,13 @@ static void *scanhash_cpufallback_thread(void *userdata)
         }
 
         cudaMemcpy(d_hash[subthread.thr_id] + (subthread.joboffset * 16), h_hash[subthread.thr_id] + (subthread.joboffset * 16), (subthread.jobcount * 16) *sizeof(uint32_t), cudaMemcpyHostToDevice);
-    
-        if (opt_debug)
-        {
-            gpulog(LOG_DEBUG, subthread.thr_id, "subthread %d finished.");
-        }
 
         subthread.jobcount = 0;
 
-        pthread_mutex_unlock(&subthread.mutex);
+		pthread_cond_signal(&subthread.cond);
     }
+
+	pthread_mutex_unlock(&subthread.mutex);
 
 	return NULL;
 }
@@ -376,26 +373,45 @@ extern "C" int scanhash_x16r(int thr_id, struct work* work, uint32_t max_nonce, 
 
         h_hash[thr_id] = (uint32_t*)malloc((size_t)64 * throughput);
         
-        if (opt_debug)
+		if (opt_debug)
         {
             gpulog(LOG_DEBUG, thr_id, "Num CPU-Fallback subthreads  = %d", num_sub_threads);
         }
 
-        for (int i = 0; i < num_sub_threads; ++i)
-        {
-            subthread_t& sub_thr = sub_threads[thr_id][i];
+		cuda_check_cpu_init(thr_id, throughput);
+
+		sub_threads[thr_id] = (subthread_t*)calloc(num_sub_threads, sizeof(subthread_t));
+
+		for (int i = 0; i < num_sub_threads; ++i)
+		{
+			subthread_t& sub_thr = sub_threads[thr_id][i];
 
 			sub_thr.jobcount = 0;
-
-            pthread_mutex_init(&sub_thr.mutex, NULL);
-            pthread_cond_init(&sub_thr.cond, NULL);
-    
-            pthread_create(&sub_thr.thread, NULL, scanhash_cpufallback_thread, &sub_thr);
-
+			sub_thr.id = i;
 			sub_thr.thr_id = thr_id;
-        }
-        
-        cuda_check_cpu_init(thr_id, throughput);
+			sub_thr.exit_thread = false;
+
+			int ret = pthread_mutex_init(&sub_thr.mutex, NULL);
+
+			if (ret != 0)
+			{
+				gpulog(LOG_ERR, thr_id, "pthread_mutex_init : failed %d", ret);
+			}
+
+			ret = pthread_cond_init(&sub_thr.cond, NULL);
+
+			if (ret != 0)
+			{
+				gpulog(LOG_ERR, thr_id, "pthread_cond_init : failed %d", ret);
+			}
+
+			ret = pthread_create(&sub_thr.thread, NULL, scanhash_cpufallback_thread, &sub_thr);
+
+			if (ret != 0)
+			{
+				gpulog(LOG_ERR, thr_id, "pthread_create : failed %d", ret);
+			}
+		}
 
         init[thr_id] = true;
     }
@@ -521,6 +537,15 @@ extern "C" int scanhash_x16r(int thr_id, struct work* work, uint32_t max_nonce, 
 
     cuda_check_cpu_setTarget(ptarget);
 
+	if (cpuFallback)
+	{
+		gpulog(LOG_INFO, thr_id, "Partial GPU job - first round is CPU (%d threads).", num_sub_threads);
+	}
+	else
+	{
+		gpulog(LOG_INFO, thr_id, "100%% GPU job.");
+	}
+
     do
     {
         int order = 0;
@@ -567,6 +592,7 @@ extern "C" int scanhash_x16r(int thr_id, struct work* work, uint32_t max_nonce, 
             case X16R_SHA512:
                 // Now handled on separate threads.
                 break;
+
             default:
                 gpulog(LOG_ERR, thr_id, "Round %d unknown hash selection: %d (this should never happen!)", 0, hash_selection[0]);
                 break;
@@ -580,16 +606,11 @@ extern "C" int scanhash_x16r(int thr_id, struct work* work, uint32_t max_nonce, 
 
             int start = 0;
 
-            if (opt_debug)
-            {
-                gpulog(LOG_DEBUG, thr_id, "Waking CPU-Fallback subthreads");
-            }
-
-            for (int i = 0; i < num_sub_threads; ++i)
+	        for (int i = 0; i < num_sub_threads; ++i)
             {
                 subthread_t& sub_thr = sub_threads[thr_id][i];
 
-                pthread_mutex_lock(&sub_thr.mutex);
+				pthread_mutex_lock(&sub_thr.mutex);
     
                 sub_thr.hash_selection = hash_selection[0];
                 
@@ -608,7 +629,7 @@ extern "C" int scanhash_x16r(int thr_id, struct work* work, uint32_t max_nonce, 
                 start += sub_thr.jobcount;
 
                 pthread_cond_signal(&sub_thr.cond);
-                pthread_mutex_unlock(&sub_thr.mutex);
+				pthread_mutex_unlock(&sub_thr.mutex);
             }
 
             // Wait for all sub-threads to complete :
@@ -618,12 +639,13 @@ extern "C" int scanhash_x16r(int thr_id, struct work* work, uint32_t max_nonce, 
                 subthread_t& sub_thr = sub_threads[thr_id][i];
 
                 pthread_mutex_lock(&sub_thr.mutex);
-                pthread_mutex_unlock(&sub_thr.mutex);
-            }
 
-            if (opt_debug)
-            {
-                gpulog(LOG_DEBUG, thr_id, "CPU-Fallback subthreads finished");
+				while (sub_thr.jobcount > 0 && !sub_thr.exit_thread)
+				{
+					pthread_cond_wait(&sub_thr.cond, &sub_thr.mutex);
+				}
+	
+                pthread_mutex_unlock(&sub_thr.mutex);
             }
         }
 
@@ -751,9 +773,16 @@ extern "C" void free_x16r(int thr_id)
 
 	int num_sub_threads = opt_n_cpu_fallback_threads;
 
+	if (opt_debug)
+	{
+		gpulog(LOG_DEBUG, thr_id, "Ending CPU-Fallback subthreads...");
+	}
+
 	for (int i = 0; i < num_sub_threads; ++i)
 	{
 		subthread_t& sub_thr = sub_threads[thr_id][i];
+
+		sub_thr.exit_thread = true;
 
 		pthread_mutex_lock(&sub_thr.mutex);
 		pthread_cond_signal(&sub_thr.cond);
@@ -767,9 +796,16 @@ extern "C" void free_x16r(int thr_id)
 		pthread_cond_destroy(&sub_thr.cond);
 	}
 
+
+	if (opt_debug)
+	{
+		gpulog(LOG_DEBUG, thr_id, "Finished CPU-Fallback subthreads.");
+	}
+
     cudaFree(d_hash[thr_id]);
 	free(h_hash[thr_id]);
-	
+	free(sub_threads[thr_id]);
+
     quark_blake512_cpu_free(thr_id);
     quark_groestl512_cpu_free(thr_id);
     x11_simd512_cpu_free(thr_id);
