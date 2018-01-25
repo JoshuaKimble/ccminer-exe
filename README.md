@@ -3,6 +3,7 @@
 Modified to add support for X16R (Ravencoin). Work in progress... lots of room for improvement. Use `-a x16r`.
 
 My interim  [Windows x64 builds](https://github.com/phasiclabs/ccminer-x16r/releases)
+
 More official/better supported [Windows x64 builds](https://github.com/todd1251/ccminer/releases)
 
 BTC donation address: 1AJdfCpLWPNoAMDfHF1wD5y8VgKSSTHxPo (tpruvot)
