@@ -71,8 +71,8 @@ typedef struct
 {
     int                     id;
     pthread_t               thread;
-    pthread_cond_t          cond = PTHREAD_COND_INITIALIZER;
-    pthread_mutex_t         mutex = PTHREAD_MUTEX_INITIALIZER;
+    pthread_cond_t          cond;
+    pthread_mutex_t         mutex;
     int                     thr_id;
     uint32_t                joboffset;
     uint32_t                jobcount;
